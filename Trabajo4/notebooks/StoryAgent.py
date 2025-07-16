@@ -2,57 +2,47 @@ import getpass
 import os
 from dotenv import load_dotenv
 
-from langchain.chat_models import init_chat_model
-from langgraph.prebuilt import create_react_agent
-# from langgraph.checkpoint.memory import MemorySaver
-from langchain_core.prompts import PromptTemplate, ChatPromptTemplate
-from langchain_core.tools import tool
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.messages import AIMessage, HumanMessage
-from langchain.agents import AgentExecutor, create_tool_calling_agent
-
-# from google import genai
 
 from pprint import pprint
 
 
 class StoryAgent:
-    MAIN_PROMPT = "Eres un generador de narrativas que generará una historia a partir de la siguiente información dada por el usuario:\n"
-    "* Género: La historia que puedes generar puede pertenecer a alguno de los siguientes géneros: Fantasía, Misterio, Romance, Terror, Ciencia Ficción, Comedia, Aventura."
-    "* Tono: El tono de la historia en general. Puede ser uno de los siguientes: Humorístico, Oscuro, Caprichoso, Dramático, Satírico."
-    "* Longitud de la historia: Puede ser corta (400 palabras), mediana (600 palabras) o larga (800 palabras)."
-    "* Personajes: El usuario puede agregar múltiples personajes a su historia, y por cada uno deberá especificar lo siguiente: Nombre, Rol, Rasgos de Personalidad, Relaciones."
-    "* Escenario: El usuario deberá especificar lo siguiente con respecto al escenario: Período de Tiempo, Ubicación, Atmósfera."
-    "* Elementos de trama: El usuario deberá especificar lo siguiente con respecto a cada uno de los elementos de la trama de la historia que desea: Tipo de Conflicto, Obstáculos, Estilo de Resolución."
+    MAIN_PROMPT = """Eres un generador de narrativas que generará una historia a partir de la siguiente información dada por el usuario:
 
-    STRUCTURE_PROMPT = "La estructura narrativa de la historia a generar debe incluir inicio, nudo y desenlace.\n"
-    "La historia generada solo debe contener el título y la historia. No agregues nada más.\n"
+* Género: La historia que puedes generar puede pertenecer a alguno de los siguientes géneros: Fantasía, Misterio, Romance, Terror, Ciencia Ficción, Comedia, Aventura.
+* Tono: El tono de la historia en general. Puede ser uno de los siguientes: Humorístico, Oscuro, Caprichoso, Dramático, Satírico.
+* Longitud de la historia: Puede ser corta (400 palabras), mediana (600 palabras) o larga (800 palabras).
+* Personajes: El usuario puede agregar múltiples personajes a su historia, y por cada uno deberá especificar lo siguiente: Nombre, Rol, Rasgos de Personalidad, Relaciones.
+* Escenario: El usuario deberá especificar lo siguiente con respecto al escenario: Período de Tiempo, Ubicación, Atmósfera.
+* Elementos de trama: El usuario deberá especificar lo siguiente con respecto a cada uno de los elementos de la trama de la historia que desea: Tipo de Conflicto, Obstáculos, Estilo de Resolución.
 
-    GENRE_PROMPT = "Ten en cuenta los siguientes tips para cada uno de los géneros de las historias:" \
-                   "* Fantasía: Haz énfasis en la construcción del mundo antes de introducir a los personajes." \
-                   "* Misterio: Usa elementos narrativos de este género como los presagios y las pistas." \
-                   "* Romance: Puedes involucrar un pequeño conflicto seguido de una reconciliación antes de terminar las historias de este género." \
-                   "* Terror: Utiliza finales ambiguos e inciertos que dejen al lector en suspenso." \
-                   "* Ciencia Ficción: Intenta utilizar conceptos científicos reales con una ligera alteración." \
-                   "* Comedia: Utiliza el entorn a tu favor para hacer reír al lector." \
-                   "* Aventura: Incluye mundos y sitios sin descubrir junto con artefactos perdidos y arcaicos.\n"
-    
-    FULL_PROMPT = MAIN_PROMPT + STRUCTURE_PROMPT + GENRE_PROMPT
+La estructura narrativa de la historia a generar debe incluir inicio, nudo y desenlace.
+La historia generada solo debe contener el título y la historia. No agregues nada más.
+
+Ten en cuenta los siguientes tips para cada uno de los géneros de las historias:
+* Fantasía: Haz énfasis en la construcción del mundo antes de introducir a los personajes.
+* Misterio: Usa elementos narrativos de este género como los presagios y las pistas.
+* Romance: Puedes involucrar un pequeño conflicto seguido de una reconciliación antes de terminar las historias de este género.
+* Terror: Utiliza finales ambiguos e inciertos que dejen al lector en suspenso.
+* Ciencia Ficción: Intenta utilizar conceptos científicos reales con una ligera alteración.
+* Comedia: Utiliza el entorno a tu favor para hacer reír al lector.
+* Aventura: Incluye mundos y sitios sin descubrir junto con artefactos perdidos y arcaicos.
+"""
 
     def __init__(self):
         self.load_env()
-        self.model = init_chat_model(
-            "gemini-2.5-flash",
-            model_provider="google_genai"
+        self.model = ChatGoogleGenerativeAI(
+            model="gemini-1.5-flash",
+            temperature=0.7
         )
-        self.tools = list()
-        self.set_main_prompt()
-        self.set_agent()
-        # self.create_tools()
-        self.chat_history = list()
+        self.chat_history = []
 
     def build_prompt(self, genero, tono, longitud, personajes, periodo_de_tiempo, ubicacion, atmosfera, conflictos, obstaculos, resolucion):
         prompt = f"Necesito que crees un título y una historia a partir de la siguiente información: \n"
-        prompt += f"* Género literario {genero}\n"
+        prompt += f"* Género literario: {genero}\n"
         prompt += f"* Tono: {tono}\n"
         prompt += f"* Longitud: {longitud}\n"
         prompt += f"* Período de tiempo: {periodo_de_tiempo}\n"
@@ -69,26 +59,65 @@ class StoryAgent:
         if not os.environ.get("GOOGLE_API_KEY"):
             os.environ["GOOGLE_API_KEY"] = getpass.getpass("Enter API key for Google Gemini: ")
 
-    def set_main_prompt(self):
-        self.main_prompt = ChatPromptTemplate([
-            ("system", StoryAgent.FULL_PROMPT),
-            ("placeholder", "{chat_history}"),
-            ("human", "{input}"),
-            ("placeholder", "{agent_scratchpad}")
-        ])
+    def generate_story(self, user_prompt):
+        """Generate a story based on user prompt"""
+        try:
+            # Create a simple prompt template
+            prompt_template = ChatPromptTemplate.from_messages([
+                ("system", self.MAIN_PROMPT),
+                ("human", "{input}")
+            ])
+            
+            # Create the chain
+            chain = prompt_template | self.model
+            
+            # Generate response
+            response = chain.invoke({"input": user_prompt})
+            
+            # Store in chat history
+            self.chat_history.append(HumanMessage(content=user_prompt))
+            self.chat_history.append(AIMessage(content=response.content))
+            
+            return {"output": response.content}
+        except Exception as e:
+            return {"output": f"Error generando la historia: {str(e)}"}
 
-    def set_agent(self):
-        self.agent = create_tool_calling_agent(
-            self.model,
-            self.tools,
-            self.main_prompt
-        )
+    def suggest_fields(self, missing_fields):
+        """Suggest content for missing fields"""
+        try:
+            suggestion_prompt = f"Recomienda posibles respuestas para los siguientes campos necesarios para generar una historia: {missing_fields}"
+            
+            prompt_template = ChatPromptTemplate.from_messages([
+                ("system", "Eres un asistente que ayuda a completar información para crear historias. Proporciona sugerencias creativas y útiles."),
+                ("human", "{input}")
+            ])
+            
+            chain = prompt_template | self.model
+            response = chain.invoke({"input": suggestion_prompt})
+            
+            self.chat_history.append(HumanMessage(content=suggestion_prompt))
+            self.chat_history.append(AIMessage(content=response.content))
+            
+            return {"output": response.content}
+        except Exception as e:
+            return {"output": f"Error generando sugerencias: {str(e)}"}
 
-        self.agent_executor = AgentExecutor(
-            agent=self.agent,
-            tools=self.tools,
-            verbose=False
-        )
+    # Compatibility method for the existing app structure
+    @property
+    def agent_executor(self):
+        """Compatibility property to maintain the same interface"""
+        class MockExecutor:
+            def __init__(self, parent):
+                self.parent = parent
+                
+            def invoke(self, input_message):
+                if "Recomienda posibles respuestas" in input_message["input"]:
+                    missing_fields = input_message["input"].split(": ")[1]
+                    return self.parent.suggest_fields(missing_fields)
+                else:
+                    return self.parent.generate_story(input_message["input"])
+        
+        return MockExecutor(self)
 
     def test_run(self):
         genero = input("Género literario: ")
@@ -102,16 +131,8 @@ class StoryAgent:
         obstaculos = input("Obstáculos: ")
         resolucion = input("Resolución: ")
         user_prompt = self.build_prompt(genero, tono, longitud, personajes, periodo_de_tiempo, ubicacion, atmosfera, conflictos, obstaculos, resolucion)
-        input_message = {
-            "role": "user",
-            "input": user_prompt,
-            "chat_history": self.chat_history
-        }
-        response = self.agent_executor.invoke(input_message)
-        self.chat_history.append(HumanMessage(content=user_prompt))
-        self.chat_history.append(AIMessage(content=response["output"]))
-        #print(response["output"])
-        #print(len(response["output"].split()))
+        
+        response = self.generate_story(user_prompt)
         return response["output"]
 
 if __name__ == "__main__":
